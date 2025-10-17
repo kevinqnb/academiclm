@@ -1,4 +1,4 @@
-# PaperLM :microscope: :books:
+# AcademicLM :microscope: :books:
 
 **Parse and analyze scientific research papers with large language models using mechanistic interpretability.**
 
