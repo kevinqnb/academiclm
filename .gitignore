@@ -1,0 +1,7 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+.env
+examples/basics.py
+examples/basics_vllm.py
+examples/pond.py
