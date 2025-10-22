@@ -4,4 +4,6 @@
 .env
 examples/basics.py
 examples/basics_vllm.py
-examples/pond.py
+experiments/pond.py
+experiments/out/*
+*.sh

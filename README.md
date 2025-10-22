@@ -1,15 +1,15 @@
-# AcademicLM :microscope: :books:
+# ScholarLM :microscope: :books:
 
 **Parse and analyze scientific research papers with large language models using mechanistic interpretability.**
 
-PaperLM is a Python library that combines document processing with advanced language model analysis to extract insights from scientific papers. Built on top of [NNsight](https://github.com/ndif-ai/nnsight), it provides tools for detecting hallucinations in retrieval-augmented generation (RAG) systems and analyzing how language models process contextual information.
+ScholarLM is a Python library that combines document processing with advanced language model analysis to extract insights from scientific papers. Built on top of [NNsight](https://github.com/ndif-ai/nnsight), it provides tools for detecting hallucinations in retrieval-augmented generation (RAG) systems and analyzing how language models process contextual information.
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/paperlm.git
-cd paperlm
+git clone https://github.com/yourusername/scholarlm.git
+cd scholarlm
 
 # Install with pixi (recommended)
 pixi install
@@ -21,7 +21,7 @@ pip install -e .
 ### Basic Usage
 
 ```python
-from paperlm import ContextLM
+from scholarlm import ContextLM
 
 # Initialize the model
 model = ContextLM(
@@ -43,7 +43,7 @@ print(f"Context Score: {result['context_score']:.4f}")
 
 ## Core Concepts
 
-PaperLM implements external context and parametric knowledge score methods from:
+ScholarLM implements external context and parametric knowledge score methods from:
 > Sun, Zhongxiang, et al. "ReDeEP: Detecting Hallucination in Retrieval-Augmented Generation via Mechanistic Interpretability." ICLR. 2025.
 
 ## License

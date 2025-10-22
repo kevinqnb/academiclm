@@ -1,3 +1,4 @@
+from tqdm import tqdm
 import math
 import numpy as np
 import torch
@@ -82,14 +83,16 @@ class ContextLM:
         self,
         model_name : str,
         top_k : float = 0.1,
-        max_new_tokens : int = 50,
+        sampling_params : dict = {},
         nnsight_kwargs : dict = {},
         verbose : bool = False
     ):
         self.model_name = model_name
         self.top_k = top_k
-        self.max_new_tokens = max_new_tokens
+        self.sampling_params = {'max_new_tokens': 50} | sampling_params
+        self.max_new_tokens = self.sampling_params['max_new_tokens']
         self.verbose = verbose
+
         self.llm = LanguageModel(model_name, **nnsight_kwargs)
         self.tokenizer = self.llm.tokenizer
         if self.tokenizer.pad_token is None:
@@ -124,7 +127,7 @@ class ContextLM:
                 3. A list of indices from tokenized_chat corresponding to the instructions.
         """
         chat = [
-            {"role": "user", "content": f"## Context:\n{context}\n\n## Instructions:\n{instructions}"},
+            {"role": "user", "content": f"## Instructions:\n{instructions}\n\n## Context:\n{context}"},
         ]
         formatted_chat = self.tokenizer.apply_chat_template(
             chat, tokenize=False, add_generation_prompt=True
@@ -299,7 +302,7 @@ class ContextLM:
             context, instructions
         )
         k = math.ceil(self.top_k * len(context_token_indices))
-        with self.llm.generate(tokenized_prompt, max_new_tokens = self.max_new_tokens) as tracer:
+        with self.llm.generate(tokenized_prompt, **self.sampling_params) as tracer:
             # Cache key matrices and context embeddings to use for external context score computation
             key_cache = [None] * len(self.llm.model.layers)
             context_top_indices = torch.zeros(
@@ -394,15 +397,13 @@ class ContextLM:
             prompts (list[tuple[str, str]]): A list of (context, instructions) pairs.
         
         Returns:
-            generations (list[str]): A list of generated text strings.
-            scores (list[float]): A list of hallucination scores for each generation.
+            responses (list[dict]): A list of dictionaries containing:
+                'response' (str): The generated text.
+                'parametric_score' (float): The summed parametric knowledge score.
+                'context_score' (float): The summed external context score.
         """
-        #n_batches = len(prompts)
-        #tokenized_prompts, context_token_indices, instruction_token_indices = zip(
-        #    *[self.tokenize(context, instructions) for context, instructions in prompts]
-        #)
         responses = []
-        for context, instructions in prompts:
+        for context, instructions in tqdm(prompts):
             response_dict = self.generate(context, instructions)
             responses.append(response_dict)
             self.responses.append(response_dict)
