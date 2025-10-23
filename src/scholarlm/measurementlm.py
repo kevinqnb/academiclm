@@ -14,6 +14,10 @@ def response_validator(response_structure, response):
 class BooleanResponse(BaseModel):
     answer: bool
 
+class DataPointResponse(BaseModel):
+    value: float | str | None
+    units: str | None
+
 
 
 class MeasurementLM:
@@ -66,16 +70,17 @@ class MeasurementLM:
         """        
         messages = []
         for i, datapoint in enumerate(self.data):
-            context = datapoint['context']
-            prompt = (
-                f"## Instructions:\n"
-                f"Determine if the following context contains any information relevant to measuring "
-                f"{', '.join(self.item_description)}. \n"
+            instructions = (
+                f"You are an expert at identifying relevant information in scientific texts. "
+                f"Determine if the given context contains any relevant information. "
                 f"Respond using a JSON object with a single key 'answer' and a boolean value "
                 f"indicating relevance (true for relevant, false for irrelevant). "
-                f"Example: {{\"answer\": false}}\n\n"
-                f"## Context:\n"
-                f"{context}"
+                f"Example: {{\"answer\": false}}"
+            )
+            context = datapoint['context']
+            query = "Is the context relevant to measuring or identifying " + f"{', '.join(self.item_description)}?"
+            prompt = (
+                f"## Instructions:\n{instructions}\n\n## Context:\n{context}\n\n## Query:\n{query}"
             )
             messages.append([
                 {"role": "user", "content": prompt}]
@@ -114,15 +119,14 @@ class MeasurementLM:
         identification_prompt = self.identification_schema.model_config['prompt']
         messages = []
         for i, datapoint in enumerate(self.data):
+            instructions = identification_prompt
             context = datapoint['context']
+            query = "Identify the items mentioned in the context."
             prompt = (
-                f"## Instructions:\n"
-                f"{identification_prompt}\n\n"
-                f"## Context:\n"
-                f"{context}"
+                f"## Instructions:\n{instructions}\n\n## Context:\n{context}\n\n## Query:\n{query}"
             )
             messages.append([
-                {"role": "user", "content": prompt}]
+                {"role": "user","content": prompt}]
             )
 
         guided_decoding_params = GuidedDecodingParams(
@@ -166,21 +170,23 @@ class MeasurementLM:
         for m in self.measurement_schema.model_fields.keys():
             m_description = self.measurement_schema.model_fields[m].description
             for i, datapoint in enumerate(self.data):
-                context = datapoint['context']
                 item = {k: v for k,v in datapoint.items() if k not in ['context', 'chunk_id']}
-                prompt = (
-                    f"## Instructions:\n"
-                    f"Does the context give a value of {m_description} for the entity {item}? "
-                    f"Do not respond positively unless there is explicit evidence in the context. "
-                    f"Do not respond positively if the context reports a range of values, or an unspecific reference to a value. "
+                instructions = (
+                    f"You are searching for data and are an expert in discerning whether or not a given piece of scientific text is relevant for your collection. "
+                    f"You will be given a context from a research paper, along with a description of a feature to be evaluated for a specific entity. "
+                    f"Your task is to determine if the context contains valued information for that feature and entity. "
+                    f"Respond positive only if the context explicity provides data for the feature and entity in question. "
                     f"Respond using a JSON object with a single key 'answer' and a boolean value "
                     f"indicating relevance (true for relevant, false for irrelevant). "
-                    f"Example: {{\"answer\": true}}\n\n"
-                    f"## Context:\n"
-                    f"{context}"
+                    f"Example: {{\"answer\": false}}"
+                )
+                context = datapoint['context']
+                query = "Does the context contain data for " + f"{m_description}  the entity {item}?"
+                prompt = (
+                f"## Instructions:\n{instructions}\n\n## Context:\n{context}\n\n## Query:\n{query}"
                 )
                 messages.append([
-                    {"role": "user", "content": prompt}]
+                    {"role": "user","content": prompt}]
                 )
                 message_measurement_types.append(m)
                 message_data_ids.append(i)
@@ -218,26 +224,27 @@ class MeasurementLM:
         """
         messages = []
         for i, datapoint in enumerate(self.data):
-            context = datapoint['context']
             item = {k: v for k,v in datapoint.items() if k not in ['context', 'chunk_id', 'measurement']}
             measurement = datapoint['measurement']
             instructions = (
-                f"Extract the value of {measurement} for the entity {item} in the given context. "
-                f"Respond with the value exactly as it is seen in the context. "
-                f"Give the value only, and doo not include any additional text in your response. "
-                f"Respond 'None' if the information is not explicitly available in the given context."
+                f"You are an expert in extracting precise data from scientific texts. "
+                f"Given a requested feature type and an entity description, extract the corresponding data point from the provided context. "
+                f"Copy the data point exactly as it appears in the context. "
+                f"If the data point has a unit of measurement, include it with the value exactly as it is seen in the context. "
+                f"Do not include any additional text in your response. "
+                f"Respond 'None' if the requested information is not explicitly available in the given context."
             )
-            context = (
-                f"{context}"
-            )
-            messages.append((context, instructions))
+            context = datapoint['context']
+            query = "Extract the measurement for " + f"{measurement} for the entity {item}."
+            messages.append((instructions, context, query))
 
         ctxlm_params = {k: v for k,v in self.sampling_params.items() if k != 'max_tokens'}
         ctxlm_params['max_new_tokens'] = 20
         ctxlm = ContextLM(
             model_name="meta-llama/Llama-3.1-8B-Instruct",
-            top_k = 0.05,
+            top_k = 10,
             sampling_params=ctxlm_params,
+            return_full_output=True,
             verbose = False
         )
         measurement_responses = ctxlm.predict(messages)
@@ -248,13 +255,72 @@ class MeasurementLM:
                 measured_data.append(
                     self.data[i] | 
                     {
-                        'value': response_dict['response'],
-                        'context_score': response_dict['context_score'],
-                        'parametric_score': response_dict['parametric_score']
-                    }
+                        'value': response_dict['response']
+                        #'context_score': response_dict['context_score'],
+                        #'parametric_score': response_dict['parametric_score']
+                    } | response_dict['context_score'] | response_dict['parametric_score']
                 )
 
         return measured_data
+
+    
+    def _separate_units(self):
+        """
+        Separates units from the extracted measurements.
+
+        Args:
+
+        Returns:
+
+        """        
+        messages = []
+        message_data_ids = []
+        for i, datapoint in enumerate(self.data):
+            item = {k: v for k,v in datapoint.items() if k not in ['context', 'chunk_id', 'measurement', 'value']}
+            measurement = datapoint['measurement']
+            measurement_val = datapoint['value']
+            measurement_description = self.measurement_schema.model_fields[measurement].description
+            available_units = self.measurement_schema.model_fields[measurement].json_schema_extra.get('units', None)
+
+            if available_units is not None:
+                instructions = (
+                    f"You are an expert in data collection and scientific measurements. "
+                    f"Given a data point, your task is to separate the value from its unit of measurement. "
+                    f"For example, in the data point '5.6 meters', '5.6' is the value and 'meters' is the unit. "
+                    f"If the data point does not explicitly include a unit, respond with 'None' as the unit. "
+                    f"Otherwise, copy the value and the unit exactly as they appear.\n\n"
+                    f"Your response should be formatted as a JSON object with two keys: 'value' and 'unit'. "
+                    f"Example: {{'value': 5.6, 'unit': 'meters'}} "
+                    f"or {{'value': 5.6, 'unit': 'None'}}"
+                )
+                context = datapoint['value']
+                query = "Separate the value and unit from the given data point."
+                prompt = (
+                    f"## Instructions:\n{instructions}\n\n## Data Point:\n{context}\n\n## Query:\n{query}"
+                )
+                messages.append([
+                    {"role": "user", "content": prompt}]
+                )
+                message_data_ids.append(i)
+
+        guided_decoding_params = GuidedDecodingParams(json=BooleanResponse.model_json_schema())
+        sampling_params = SamplingParams(
+            **self.sampling_params,
+            guided_decoding=guided_decoding_params
+        )
+        responses = self.llm.chat(messages = messages, sampling_params = sampling_params)
+        response_texts = [r.outputs[0].text for r in responses]
+        response_validated = [
+            response_validator(DataPointResponse, r) for r in response_texts
+        ]
+        
+        separated_data = [datapoint for datapoint in self.data]
+        for i, resp in enumerate(response_validated):
+            separated_data[message_data_ids[i]]['value'] = resp['value']
+            separated_data[message_data_ids[i]]['units'] = resp['units']
+
+        return separated_data
+    
 
     def _standardize(self):
         """
@@ -268,25 +334,29 @@ class MeasurementLM:
         messages = []
         message_data_ids = []
         for i, datapoint in enumerate(self.data):
-            context = datapoint['context']
             item = {k: v for k,v in datapoint.items() if k not in ['context', 'chunk_id', 'measurement', 'value']}
             measurement = datapoint['measurement']
             measurement_val = datapoint['value']
-
             measurement_description = self.measurement_schema.model_fields[measurement].description
             available_units = self.measurement_schema.model_fields[measurement].json_schema_extra.get('units', None)
 
             if available_units is not None:
-                units_str = ', '.join(available_units)
+                units_str = ', '.join(available_units) + ', other'
+                instructions = (
+                    f"You are an expert in data collection and scientific measurements. "
+                    f"Given a data point, your task is to standardize the format for its unit of measurement by choosing from a list of available options. "
+                    f"For example, if the data point is '5.6 meters' and your options are 'm', 'km', 'ft', or 'other', the correct standardized choice would be 'm'. "
+                    f"If the data point's unit of measurement is 'None' or null to begin with, simply respond 'None'. "
+                    f"Respond with only the standardized unit exactly as it appears in the list of available options. "
+                    f"Do not include any additional text or explanation in your response."
+                )
+                context = f"{{value: {datapoint['value']}, unit: {datapoint['units']}}}"
+                query = (
+                    f"Determine the best standardized unit for the given data point from among the "
+                    f"following choices: {available_units}."
+                )
                 prompt = (
-                    f"## Instructions:\n"
-                    f"Determine the units of measurement which the context uses for the value {measurement_val}, "
-                    f"reported for {measurement_description} for the entity {item}. "
-                    f"Your answer should be the best fitting unit from among the following options: {units_str}. "
-                    f"If none of the options fit, respond with the unit 'other'. "
-                    f"Respond with the unit only, and do not include any additional text.\n\n"
-                    f"## Context:\n"
-                    f"{context}"
+                    f"## Instructions:\n{instructions}\n\n## Data Point:\n{context}\n\n## Query:\n{query}"
                 )
                 messages.append([
                     {"role": "user", "content": prompt}]
@@ -305,7 +375,6 @@ class MeasurementLM:
             standardized_data[message_data_ids[i]]['units'] = resp.strip()
 
         return standardized_data
-        
 
 
     def fit(
@@ -326,7 +395,8 @@ class MeasurementLM:
         self.data = self._identify()
         self.data = self._measurements_filter()
         self.data = self._measure()
-        self.data = self._standardize()
+        #self.dat = self._separate_units()
+        #self.data = self._standardize()
 
         return self.data
     

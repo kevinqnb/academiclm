@@ -85,12 +85,14 @@ class ContextLM:
         top_k : int = 10,
         sampling_params : dict = {},
         nnsight_kwargs : dict = {},
+        return_full_output : bool = False,
         verbose : bool = False
     ):
         self.model_name = model_name
         self.top_k = top_k
         self.sampling_params = {'max_new_tokens': 50} | sampling_params
         self.max_new_tokens = self.sampling_params['max_new_tokens']
+        self.return_full_output = return_full_output
         self.verbose = verbose
 
         self.llm = LanguageModel(model_name, **nnsight_kwargs)
@@ -258,7 +260,7 @@ class ContextLM:
             # Cache key matrices and context embeddings to use for external context score computation
             key_cache = [None] * len(self.llm.model.layers)
             context_top_indices = torch.zeros(
-                (self.max_new_tokens, len(self.llm.model.layers), 1, self.n_heads, 1, k),
+                (self.max_new_tokens, self.n_layers, 1, self.n_heads, 1, k),
                 dtype = torch.long
             ).save()
             context_emb = torch.zeros(
@@ -267,12 +269,12 @@ class ContextLM:
 
             # Record external context scores
             external_context_scores = torch.zeros(
-                (self.max_new_tokens, len(self.llm.model.layers), self.n_heads)
+                (self.max_new_tokens, self.n_layers, self.n_heads)
             ).save()
 
             # Record parametric knowledge scores
             parametric_knowledge_scores = torch.zeros(
-                (self.max_new_tokens, len(self.llm.model.layers))
+                (self.max_new_tokens, self.n_layers)
             ).save()
 
             # Record the response tokens
@@ -329,15 +331,33 @@ class ContextLM:
 
         # Average scores over response tokens:
         avg_parametric_knowledge_scores = parametric_knowledge_scores.mean(dim=0)
-        self.parametric_score_arrays.append(avg_parametric_knowledge_scores.cpu().detach().numpy())
+        avg_parametric_knowledge_scores = avg_parametric_knowledge_scores.cpu().detach().numpy()
+        self.parametric_score_arrays.append(avg_parametric_knowledge_scores)
         avg_external_context_scores = external_context_scores.mean(dim=0)
-        self.context_score_array.append(avg_external_context_scores.cpu().detach().numpy())
+        avg_external_context_scores = avg_external_context_scores.cpu().detach().numpy()
+        self.context_score_array.append(avg_external_context_scores)
 
-        response_dict = {
-            "response": response,
-            "parametric_score": avg_parametric_knowledge_scores.sum().item(),
-            "context_score": avg_external_context_scores.sum().item()
-        }
+        if self.return_full_output:
+            parametric_score_dict = {
+                f"parametric_l{layer_idx}": avg_parametric_knowledge_scores[layer_idx]
+                for layer_idx in range(self.n_layers)
+            }
+            external_context_score_dict = {
+                f"context_l{layer_idx}h{head_idx}": avg_external_context_scores[layer_idx, head_idx]
+                for layer_idx, head_idx in 
+                [(l, h) for l in range(self.n_layers) for h in range(self.n_heads)]
+            }
+            response_dict = {
+                "response": response,
+                "parametric_score": parametric_score_dict,
+                "context_score": external_context_score_dict
+            }
+        else:
+            response_dict = {
+                "response": response,
+                "parametric_score": avg_parametric_knowledge_scores.sum(),
+                "context_score": avg_external_context_scores.sum()
+            }
 
         return response_dict
 
