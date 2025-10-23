@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer
 from nnsight import LanguageModel
-from .utils import jensen_shannon_divergence
+from .utils import tokenize, jensen_shannon_divergence
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -82,7 +82,7 @@ class ContextLM:
     def __init__(
         self,
         model_name : str,
-        top_k : float = 0.1,
+        top_k : int = 10,
         sampling_params : dict = {},
         nnsight_kwargs : dict = {},
         verbose : bool = False
@@ -104,55 +104,6 @@ class ContextLM:
         self.responses = []
         self.parametric_score_arrays = []
         self.context_score_array = []
-
-
-    def tokenize(
-        self,
-        context : str,
-        instructions : str
-    ) -> tuple[list[int], list[int], list[int]]:
-        """
-        Apply a chat template to a (context, instructions) pair, and return the tokenized input
-        along with the indices of the tokens corresponding to context and instruction text.
-
-        Args:
-            context (str): The context string.
-            prompt (str): The prompt string.
-            tokenizer (Callable): Huggingface tokenizer.
-
-        Returns:
-            tokenized_chat, context_tokens, prompt_tokens (tuple[list[int] * 3]): A tuple containing:
-                1. The tokenized input represented as a list of integer token ids.
-                2. A list of indices from tokenized_chat corresponding to the context.
-                3. A list of indices from tokenized_chat corresponding to the instructions.
-        """
-        chat = [
-            {"role": "user", "content": f"## Instructions:\n{instructions}\n\n## Context:\n{context}"},
-        ]
-        formatted_chat = self.tokenizer.apply_chat_template(
-            chat, tokenize=False, add_generation_prompt=True
-        )
-        tokenized_chat = self.tokenizer(
-            formatted_chat, return_offsets_mapping=True, add_special_tokens=False
-        )
-
-        context_start, context_end = (
-            formatted_chat.index(context), formatted_chat.index(context) + len(context)
-        )
-        prompt_start, prompt_end = (
-            formatted_chat.index(instructions), formatted_chat.index(instructions) + len(instructions)
-        )
-
-        context_tokens = [
-            i for i, (s, e) in enumerate(tokenized_chat["offset_mapping"])
-            if s >= context_start and e <= context_end
-        ]
-        prompt_tokens  = [
-            i for i, (s, e) in enumerate(tokenized_chat["offset_mapping"])
-            if s >= prompt_start and e <= prompt_end
-        ]
-
-        return tokenized_chat["input_ids"], context_tokens, prompt_tokens
     
 
     def compute_attention(
@@ -234,20 +185,15 @@ class ContextLM:
 
         Returns:
             torch.Tensor: A tensor of shape [num_layers, num_heads] containing the external context scores.
-        """
+        """        
         n_layers = len(self.llm.model.layers)
-        external_context_scores = torch.zeros((n_layers, self.n_heads))
-
-        for layer_idx in range(n_layers):
-            for head_idx in range(self.n_heads):
-                # Get mean of top-k context embeddings
-                alh_idx = context_top_indices[layer_idx, 0, head_idx, 0, :]
-                alh_emb = context_emb_cache[alh_idx, :]
-                mean_alh_emb = alh_emb.mean(dim=0, keepdim=True)
-
-                # Compute cosine similarity with the current token embedding
-                cos_sim = F.cosine_similarity(last_token_emb, mean_alh_emb, dim=-1)
-                external_context_scores[layer_idx, head_idx] = cos_sim
+        top_k_indices = context_top_indices[:, 0, :, 0, :].flatten(start_dim = 0, end_dim = 1)
+        flattened_indices = top_k_indices.flatten() 
+        top_k_emb = context_emb_cache[flattened_indices]
+        top_k_emb = top_k_emb.view(top_k_indices.shape[0], top_k_indices.shape[1], -1)
+        mean_top_k_emb = torch.mean(top_k_emb, dim=1)
+        cosine_similarity = F.cosine_similarity(mean_top_k_emb, last_token_emb, dim=1)
+        external_context_scores = cosine_similarity.view(n_layers, self.n_heads)
 
         return external_context_scores
 
@@ -281,16 +227,18 @@ class ContextLM:
 
     def generate(
         self,
+        instructions: str,
         context: str,
-        instructions: str
+        query: str
     ) -> dict[str, str | float]:
         """
         Generate text for a (context, instructions) pair, and compute
         external context scores and parametric knowledge scores for each generated token.
 
         Args:
-            context (str): The context string.
             instructions (str): The instructions string.
+            context (str): The context string.
+            query (str): The query string.
 
         Returns:
             response_dict (dict): A dictionary containing:
@@ -298,10 +246,14 @@ class ContextLM:
                 'parametric_score' (float): The summed parametric knowledge score.
                 'context_score' (float): The summed external context score.
         """
-        tokenized_prompt, context_token_indices, instruction_token_indices = self.tokenize(
-            context, instructions
+        (tokenized_prompt,
+         instruction_token_indices,
+         context_token_indices,
+         query_token_indices) = tokenize(
+            instructions, context, query, self.tokenizer
         )
-        k = math.ceil(self.top_k * len(context_token_indices))
+        #k = math.ceil(self.top_k * len(context_token_indices))
+        k = self.top_k
         with self.llm.generate(tokenized_prompt, **self.sampling_params) as tracer:
             # Cache key matrices and context embeddings to use for external context score computation
             key_cache = [None] * len(self.llm.model.layers)
@@ -345,6 +297,10 @@ class ContextLM:
 
                     # Find top-k context indices for each head
                     context_attn_weights = attn_weights[:, :, :, context_token_indices]
+
+                    #print("ContextLM Attentions:")
+                    #print(context_attn_weights)
+
                     layer_context_top_values, layer_context_top_indices = torch.topk(
                         context_attn_weights, k=k, dim=-1
                     )
@@ -357,8 +313,8 @@ class ContextLM:
                 
                 # Last layer embeddings for context and current token:
                 if token_idx == 0:
-                    context_emb[:,:] = self.llm.model.norm.output[:, context_token_indices, :]
-                last_token_emb = self.llm.model.norm.output[:, -1, :].cpu()
+                    context_emb[:,:] = self.llm.model.output.last_hidden_state[:, context_token_indices, :]
+                last_token_emb = self.llm.model.output.last_hidden_state[:, -1, :].cpu()
 
                 # Compute external context score:
                 external_context_scores[token_idx, :, :] = self.compute_external_context_score(
@@ -367,6 +323,7 @@ class ContextLM:
 
                 # Compute response tokens:
                 response_tokens[token_idx] = self.llm.output["logits"][0, -1, :].argmax(dim=-1)
+
 
         response = self.llm.tokenizer.decode(response_tokens.cpu(), skip_special_tokens=True)
 
@@ -387,14 +344,14 @@ class ContextLM:
     
     def predict(
         self,
-        prompts : list[tuple[str, str]]
+        prompts : list[tuple[str, str, str]]
     ) -> tuple[list[str], list[float]]:
         """
         Generate text for a batch of (context, instructions) pairs, and compute
         a hallucination score for each generation.
 
         Args:
-            prompts (list[tuple[str, str]]): A list of (context, instructions) pairs.
+            prompts (list[tuple[str, str, str]]): A list of (instructions, context, query) pairs.
         
         Returns:
             responses (list[dict]): A list of dictionaries containing:
@@ -403,8 +360,8 @@ class ContextLM:
                 'context_score' (float): The summed external context score.
         """
         responses = []
-        for context, instructions in tqdm(prompts):
-            response_dict = self.generate(context, instructions)
+        for instructions, context, query in tqdm(prompts):
+            response_dict = self.generate(instructions, context, query)
             responses.append(response_dict)
             self.responses.append(response_dict)
 

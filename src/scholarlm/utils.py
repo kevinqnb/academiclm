@@ -6,6 +6,9 @@ import torch
 from typing import Callable
 
 
+####################################################################################################
+
+
 def get_filenames_in_directory(
     directory_path : str, ignore : list[str] = None
 ) -> list[str]:
@@ -32,6 +35,9 @@ def get_filenames_in_directory(
          return f"Error: Not a directory: {directory_path}"
     
 
+####################################################################################################
+
+
 def get_foldernames_in_directory(
     directory_path : str, ignore : list[str] = None
 ) -> list[str]:
@@ -56,6 +62,72 @@ def get_foldernames_in_directory(
         return f"Error: Directory not found: {directory_path}"
     except NotADirectoryError:
          return f"Error: Not a directory: {directory_path}"
+
+
+####################################################################################################
+
+
+def tokenize(
+    instructions : str,
+    context : str,
+    query : str,
+    tokenizer: callable,
+) -> tuple[list[int], list[int], list[int]]:
+    """
+    Apply a chat template to a (context, instructions) pair, and return the tokenized input
+    along with the indices of the tokens corresponding to context and instruction text.
+
+    Args:
+        instructions (str): The instruction string.
+        context (str): The context string.
+        query (str): The query string.
+        tokenizer (Callable): Huggingface tokenizer.
+
+    Returns:
+        tokenized_chat, context_tokens, prompt_tokens (tuple[list[int] * 3]): A tuple containing:
+            1. The tokenized input represented as a list of integer token ids.
+            2. A list of indices from tokenized_chat corresponding to the instructions.
+            3. A list of indices from tokenized_chat corresponding to the context.
+            4. A list of indices from tokenized_chat corresponding to the query.
+    """
+    chat = [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": f"## Context:\n{context}\n\n## Query:\n{query}"},
+    ]
+    formatted_chat = tokenizer.apply_chat_template(
+        chat, tokenize=False, add_generation_prompt=True
+    )
+    tokenized_chat = tokenizer(
+        formatted_chat, return_offsets_mapping=True, add_special_tokens=False
+    )
+
+    instruction_start, instruction_end = (
+        formatted_chat.index(instructions), formatted_chat.index(instructions) + len(instructions)
+    )
+    context_start, context_end = (
+        formatted_chat.index(context), formatted_chat.index(context) + len(context)
+    )
+    query_start, query_end = (
+        formatted_chat.index(query), formatted_chat.index(query) + len(query)
+    )
+
+    instruction_tokens = [
+        i for i, (s, e) in enumerate(tokenized_chat["offset_mapping"])
+        if s >= instruction_start and e <= instruction_end
+    ]
+    context_tokens = [
+        i for i, (s, e) in enumerate(tokenized_chat["offset_mapping"])
+        if s >= context_start and e <= context_end
+    ]
+    query_tokens  = [
+        i for i, (s, e) in enumerate(tokenized_chat["offset_mapping"])
+        if s >= query_start and e <= query_end
+    ]
+
+    return tokenized_chat["input_ids"], instruction_tokens, context_tokens, query_tokens
+
+
+####################################################################################################
 
 
 def jensen_shannon_divergence(
@@ -92,3 +164,6 @@ def jensen_shannon_divergence(
     
     jsd = 0.5 * (kl_pm + kl_qm)
     return jsd
+
+
+####################################################################################################
