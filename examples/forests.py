@@ -1,32 +1,12 @@
-# AcademicLM :microscope: :books:
-
-**Parse and analyze scientific research papers with large language models.**
-
-*NOTE:* This project is a work in progress, and only a portion of it is shared here for the purpose of communicating my work. I kindly ask that you please be respectful of the content — it is shared for viewing and discussion only.
-
-This library implements a system for extracting insights from scientific papers (which are in the form of pdfs) using large language models.
-Specifically, we apply local and open source LLMs towards organized tasks for:
-* Document OCR: translating pdf images into markdown, and splitting into paragraph sized chunks.
-* Document extraction: systematically collecting data points from chunks of markdown text. 
-* Hallucination detection
-
-Our focus is on using small, local models for OCR and text generation tasks, and this library is designed to be compatible with any such model of your choosing. 
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/academiclm.git
-cd academiclm
-
-# Install with uv (recommended for working with VLLM)
-uv sync
-```
-
-### Basic Usage
-
-```python
+import os
+import json
+import pandas as pd
+from pydantic import BaseModel, Field
 from academiclm import DocumentLM, MeasurementLM
+from academiclm import get_filenames_in_directory
+
+filepaths = get_filenames_in_directory('data/papers/')
+pdf_filepaths = [os.path.join('data/papers/', f) for f in filepaths if f.endswith('.pdf')]
 
 # First describe the specific entities to search for and identify.
 identification_prompt = (
@@ -77,14 +57,5 @@ measurementlm = MeasurementLM(
 )
 
 data = measurementlm.fit(text_chunks)
-
-```
-
-## License
-
-Copyright (c) 2025 [Kevin Quinn]. All rights reserved.
-
-This repository and its contents are provided for viewing purposes only.
-No part of this work may be reproduced, distributed, or used in any form
-without the express written permission of the author.
-
+df = pd.DataFrame(data)
+df.to_csv('data/experiments/forest_measurements.csv', index=False)
