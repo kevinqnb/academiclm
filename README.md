@@ -2,7 +2,7 @@
 
 **Parse and analyze scientific research papers with large language models.**
 
-*NOTE:* This project is a work in progress, and only a portion of it is shared here for the purpose of communicating my work. I kindly ask that you please be respectful of the content — it is shared for viewing and discussion only.
+*NOTE:* This project is a work in progress, and only a portion of it is shared here for the purpose of communicating my work. I kindly ask that you please be respectful of the content, for now it is shared for viewing and discussion only.
 
 This library implements a system for extracting insights from scientific papers (which are in the form of pdfs) using large language models.
 Specifically, we apply local and open source LLMs towards organized tasks for:
