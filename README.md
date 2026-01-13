@@ -1,6 +1,6 @@
 # AcademicLM :microscope: :books:
 
-**Parse and analyze scientific research papers with large language models.**
+## Parse and analyze scientific research papers with large language models.
 
 *NOTE:* This project is a work in progress and the following repository is a small portion of it, shared for the purpose of communicating my work. I kindly ask that you please be respectful and careful about using its contents, since it is currently intended for viewing and discussion only.
 
@@ -8,7 +8,6 @@ This library implements a system for extracting insights from scientific papers 
 Specifically, we apply local and open source LLMs towards organized tasks for:
 * Document OCR: translating pdf images into markdown, and splitting into paragraph sized chunks.
 * Document extraction: systematically collecting data points from chunks of markdown text. 
-* Hallucination detection
 
 ### Hallucination Detection
 To detect hallucinations whilst extracting data, we implement methods from mechanistic 
