@@ -1,3 +1,5 @@
+from .contextlm import ContextLM
+
 from .documentlm import DocumentLM
 
 from .measurementlm import MeasurementLM

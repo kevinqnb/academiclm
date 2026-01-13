@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 import pandas as pd
-from vllm import LLM, SamplingParams
-from vllm.sampling_params import GuidedDecodingParams
+from .contextlm import ContextLM
 
 
 def response_validator(response_structure, response):
@@ -25,7 +24,6 @@ class MeasurementLM:
     Args:
         model_name (str): The name or path of the pre-trained language model from the huggingface 
             collection.
-        item_description (str): Main description for the items to be measured.
         identification_schema (dict[str, str]): A dictionary defining the identification schema, 
             where keys are the measurement identifiers and values are their descriptions.
         measurement_schema (dict[str, str]): A dictionary defining the measurement schema, 
@@ -34,24 +32,25 @@ class MeasurementLM:
     def __init__(
         self,
         model_name: str,
-        item_description: str,
-        identification_schema: dict[str, str],
-        measurement_schema: dict[str, str],
+        identification_prompt: str,
+        measurement_types : dict[str, str],
+        test_entities: list[str] = None,
         sampling_params: dict[str, any] = None,
     ):
         self.model_name = model_name
-        self.item_description = item_description
-        self.identification_schema = identification_schema
-        self.measurement_schema = measurement_schema
+        self.identification_prompt = identification_prompt
+        self.measurement_types = measurement_types
+        self.test_entities = test_entities
         self.sampling_params = {
-            "temperature" : 0.90,
-            "top_p" : 0.95,
-            "top_k" : 64,
-            "repetition_penalty" : 1.0,
-            "max_tokens" : 2048,
+            "max_new_tokens" : 100,
         } | sampling_params
 
-        self.llm = LLM(model=model_name)
+        self.llm = ContextLM(
+            model_name=model_name,
+            sampling_params=self.sampling_params,
+            generate_full_output=False,
+            cache_dir="data/scores"
+        )
     
 
     def _identify(self):
@@ -63,54 +62,45 @@ class MeasurementLM:
         Returns:
             unique_itemized_data (list[dict]): A list of data points with identified items.
         """
-        identification_schema_json = self.identification_schema.model_json_schema()
-        identification_prompt = self.identification_schema.model_config['prompt']
         messages = []
         for i, datapoint in enumerate(self.data):
-            instructions = identification_prompt
+            instructions = self.identification_prompt
             context = datapoint['context']
-            query = "Follow the instructions to identify the items mentioned in the context: "
-            prompt = (
-                f"## Instructions:\n{instructions}\n\n## Context:\n{context}\n\n## Query:\n{query}"
-            )
-            messages.append([
-                {"role": "user","content": prompt}]
-            )
+            query = "Follow the instructions to identify the items mentioned in the context."
+            messages.append((instructions, context, query))
 
-        guided_decoding_params = GuidedDecodingParams(
-            json=identification_schema_json
-        )
-        sampling_params = SamplingParams(
-            **self.sampling_params,
-            guided_decoding=guided_decoding_params
-        )
-
-        responses = self.llm.chat(messages = messages, sampling_params = sampling_params)
-        response_texts = [r.outputs[0].text for r in responses]
-        response_validated = []
-        for r in response_texts:
-            try:
-                resp_validated = response_validator(self.identification_schema, r)
-            except:
-                print("Validation error in identification response, assigning empty items list.")
-                resp_validated = {'items': []}
-            response_validated.append(resp_validated)
+        responses = self.llm.predict(messages)
+        
+        response_texts = [r['response'] for r in responses]
+        response_validated = response_texts
 
         itemized_data = []
         for i, resp in enumerate(response_validated):
-            # Copy items found from each chunk across the rest of their corresponding paper
-            #paper_id = self.data[i]['paper_id']
-            #paper_data = [d for d in self.data if d['paper_id'] == paper_id]
-            #for datapoint in paper_data:
             datapoint = self.data[i]
-            for item in resp['items']:
-                itemized_data.append(datapoint | item)
+            for item in resp.split(';'):
+                item = item.strip()
+                if item.lower() != 'none' and item != '':
+                    itemized_data.append(
+                        datapoint | {
+                            'name': item
+                        }
+                    )
 
         # De-duplicate itemized data points
         unique_itemized_data = [dict(s) for s in {frozenset(d.items()) for d in itemized_data}]
 
-        return unique_itemized_data
-    
+        # Add in a fake forest name for testing scores:
+        test_itemized_data = []
+        for entry in unique_itemized_data:
+            real_entry = entry
+            test_itemized_data.append(real_entry)
+
+            for test_entity in self.test_entities:
+                test_entry = entry.copy()
+                test_entry['name'] = test_entity
+                test_itemized_data.append(test_entry)
+
+        return test_itemized_data
 
     def _measure(self):
         """
@@ -123,112 +113,45 @@ class MeasurementLM:
         """
         messages = []
         message_measurement_types = []
-        for m in self.measurement_schema.model_fields.keys():
-            m_description = self.measurement_schema.model_fields[m].description
+        for measurement in self.measurement_types.keys():
+            m_description = self.measurement_types[measurement]
             for i, datapoint in enumerate(self.data):
-                item = {k: v for k,v in datapoint.items() if k not in ['context', 'chunk_id']}
+                item = {k: v for k,v in datapoint.items() if k not in ['context', 'paper_id', 'chunk_id']}
                 instructions = (
                     f"You are an expert in extracting precise numerical data from user provided, scientific text. "
                     f"A value is a single numerical measurement explicitly mentioned in the context. "
                     f"You will be queried with a description of an specific entity to be measured, along with the measurement type to report for. "
                     f"Your task is to extract the corresponding value from the provided context. "
                     f"Copy the value exactly as it appears in the context. "
-                    f"Give the value only, and do not include any units of measurement, descriptors, or explanation in your response. "
-                    f"Respond 'None' if the requested information is not explicitly available in the given context."
+                    f"Respond 'None' if the requested information is not explicitly available in the given context. "
+                    f"Do not include any additional text or explanation in your response."
                 )
                 context = datapoint['context']
-                query = "Extract the value of " + f"{m} for the entity {item}."
-                prompt = (
-                f"## Instructions:\n{instructions}\n\n## Context:\n{context}\n\n## Query:\n{query}"
-                )
-                messages.append([
-                    {"role": "user","content": prompt}]
-                )
-                message_measurement_types.append(m)
+                query = f"Extract the value of {m_description} for the entity {item}."
+                messages.append((instructions, context, query))
+                message_measurement_types.append(measurement)
 
-        sampling_params = SamplingParams(
-            **self.sampling_params,
-        )
-
-        responses = self.llm.chat(messages = messages, sampling_params = sampling_params)
-        measurement_responses = [r.outputs[0].text for r in responses]
+        self.llm.set_output_mode(generate_full_output=True)
+        responses = self.llm.predict(messages, ids = list(range(len(messages))))
 
         measured_data = []
-        for i, measurement_value in enumerate(measurement_responses):
+        for i, measurement_dict in enumerate(responses):
             m_type = message_measurement_types[i]
             datapoint = self.data[i]
-            measured_data.append(
-                datapoint | {
-                    'measurement': m_type,
-                    'value': measurement_value.strip()
-                }
-            )
-
+            response = measurement_dict['response']
+            context_scores = measurement_dict['context_scores'] if 'context_scores' in measurement_dict else None
+            parametric_scores = measurement_dict['parametric_scores'] if 'parametric_scores' in measurement_dict else None
+            if response.strip().lower() != 'none':
+                measured_data.append(
+                    datapoint | {
+                        'measurement': m_type,
+                        'measurement_id': i,
+                        'value': response.strip(),
+                        'context_scores': context_scores,
+                        'parametric_scores': parametric_scores,
+                    }
+                )
         return measured_data
-    
-
-    def _standardize(self):
-        """
-        Gives standardized units to the extracted measurements.
-
-        Args:
-
-        Returns:
-            standardized_data (list[dict]): A list of data points with standardized units.
-        """        
-        messages = []
-        message_data_ids = []
-        sampling_params = []
-        for i, datapoint in enumerate(self.data):
-            item = {k: v for k,v in datapoint.items() if k not in ['context', 'chunk_id', 'measurement', 'value']}
-            measurement = datapoint['measurement']
-            measurement_val = datapoint['value']
-
-            measurement_description = self.measurement_schema.model_fields[measurement].description
-            available_units = self.measurement_schema.model_fields[measurement].json_schema_extra.get('units', None)
-
-            if available_units is not None:
-                units_list = available_units + ['other']
-                units_str = ', '.join(units_list)
-                instructions = (
-                    f"You are an expert in data collection and scientific measurements. "
-                    f"You will be given context from a research paper, along with a description of a measurement value and the entity it was reported for. "
-                    f"Your task is to determine the unit of measurement for that data point by referencing the context, and then choosing from a list of available options. "
-                    f"To ensure units follow standard formatting conventions, your response should be limited to options from among the given list. "
-                    f"If none of the options fit with what is seen in the context, respond with the unit 'other'. "
-                    f"Your response should include the unit only, do not include any additional explanation or text.\n\n"
-                )
-                context = datapoint['context']
-                query = (
-                    f"Entity measured: {item}\n"
-                    f"Measurement type: {measurement_description}\n"
-                    f"Measurement value: {measurement_val}\n"
-                    f"Determine the unit of measurement for the given data point from among the following choices: {available_units}."
-                )
-                prompt = (
-                    f"## Instructions:\n{instructions}\n\n## Context:\n{context}\n\n## Query:\n{query}"
-                )
-                messages.append([
-                    {"role": "user", "content": prompt}]
-                )
-                message_data_ids.append(i)
-                guided_decoding_params = GuidedDecodingParams(
-                    choice = units_list
-                )
-                params = SamplingParams(
-                    **self.sampling_params,
-                    guided_decoding=guided_decoding_params
-                )
-                sampling_params.append(params)
-
-        responses = self.llm.chat(messages = messages, sampling_params = sampling_params)
-        response_units = [r.outputs[0].text for r in responses]
-        
-        standardized_data = [datapoint for datapoint in self.data]
-        for i, resp in enumerate(response_units):
-            standardized_data[message_data_ids[i]]['units'] = resp.strip()
-
-        return standardized_data
 
 
     def fit(
@@ -240,7 +163,7 @@ class MeasurementLM:
         and extracting measurements.
 
         Args:
-            chunks (list[str]): A list of text chunks.
+            chunks (list[list[str]]): A list of text chunks, for each paper.
         Returns:
             measurements (list[dict]): A list of measurements extracted for identified items.
         """
@@ -251,7 +174,6 @@ class MeasurementLM:
 
         self.data = self._identify()
         self.data = self._measure()
-        self.data = self._standardize()
 
         return self.data
     
