@@ -2,7 +2,7 @@
 
 **Parse and analyze scientific research papers with large language models.**
 
-*NOTE:* This project is a work in progress, and only a portion of it is shared here for the purpose of communicating my work. I kindly ask that you please be respectful of the content, for now it is shared for viewing and discussion only.
+*NOTE:* This project is a work in progress and the following repository is a small portion of it, shared for the purpose of communicating my work. I kindly ask that you please be respectful and careful about using its contents, it is currently intended for viewing and discussion only.
 
 This library implements a system for extracting insights from scientific papers (which are in the form of pdfs) using large language models.
 Specifically, we apply local and open source LLMs towards organized tasks for:
@@ -10,17 +10,18 @@ Specifically, we apply local and open source LLMs towards organized tasks for:
 * Document extraction: systematically collecting data points from chunks of markdown text. 
 * Hallucination detection
 
-Our focus is on using small, local models for OCR and text generation tasks, and this library is designed to be compatible with any such model of your choosing. 
-
 ### Hallucination Detection
 To detect hallucinations whilst extracting data, we implement methods from mechanistic 
 interpretability to analyze a model's internal features. Specifically, we 
-use the scoring mechanisms defined in the following work. 
+use the scoring mechanisms as defined in the following study. 
 
-**Sun, Zhongxiang, et al. "ReDeEP: Detecting Hallucination in Retrieval-Augmented Generation via Mechanistic Interpretability." ICLR. 2025.**
+**[Sun, Zhongxiang, et al. "ReDeEP: Detecting Hallucination in Retrieval-Augmented Generation via Mechanistic Interpretability." ICLR. 2025.](https://arxiv.org/abs/2410.11414)**
 
-This allows for computation of scores across model layers and attention heads, of which 
-some may be more indicative of hallucination behavior than others. 
+We compute hallucination detection scores across a model's layers and attention heads, since 
+some may be more indicative of hallucination behavior than others. In the example below, 
+we notice that a non-hallucinated extraction shows context scores which are more strongly concentrated within 
+a few individual attention heads in later layers of the model. For this score, larger values indicate stronger copying (non-hallucination)
+behavior. 
 
 <table>
   <tr>
