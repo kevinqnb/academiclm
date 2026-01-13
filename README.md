@@ -13,7 +13,7 @@ Specifically, we apply local and open source LLMs towards organized tasks for:
 ### Hallucination Detection
 To detect hallucinations whilst extracting data, we implement methods from mechanistic 
 interpretability to analyze a model's internal features. Specifically, we 
-use the scoring mechanisms as defined in the following study. 
+implement the scoring mechanisms as defined in the following study. 
 
 **[Sun, Zhongxiang, et al. "ReDeEP: Detecting Hallucination in Retrieval-Augmented Generation via Mechanistic Interpretability." ICLR. 2025.](https://arxiv.org/abs/2410.11414)**
 
