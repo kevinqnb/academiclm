@@ -1,6 +1,6 @@
 # AcademicLM :microscope: :books:
 
-## Parse and analyze scientific research papers with large language models.
+### Parse and analyze scientific research papers with large language models.
 
 *NOTE:* This project is a work in progress and the following repository is a small portion of it, shared for the purpose of communicating my work. I kindly ask that you please be respectful and careful about using its contents, since it is currently intended for viewing and discussion only.
 
