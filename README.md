@@ -17,10 +17,10 @@ implement the scoring mechanisms as defined in the following study.
 **[Sun, Zhongxiang, et al. "ReDeEP: Detecting Hallucination in Retrieval-Augmented Generation via Mechanistic Interpretability." ICLR. 2025.](https://arxiv.org/abs/2410.11414)**
 
 We compute hallucination detection scores across a model's layers and attention heads, since 
-some may be more indicative of hallucination behavior than others. In the example below, 
+some may be more indicative of hallucination behavior than others. In the example figures below, 
 we notice that a non-hallucinated extraction shows context scores which are more strongly concentrated within 
 a few individual attention heads in later layers of the model. For this score, larger values indicate stronger copying (non-hallucination)
-behavior. This example is produced using the `meta-llama/Llama-3.1-8B-Instruct` model.
+behavior. 
 
 <table>
   <tr>
