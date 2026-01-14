@@ -20,17 +20,17 @@ We compute hallucination detection scores across a model's layers and attention 
 some may be more indicative of hallucination behavior than others. In the example figures below, 
 we notice that a non-hallucinated extraction shows context scores which are more strongly concentrated within 
 a few individual attention heads in later layers of the model. For this score, larger values indicate stronger copying (non-hallucination)
-behavior. 
+behavior. This example is produced using the `meta-llama/Llama-3.1-8B-Instruct` model. 
 
 <table>
   <tr>
     <td align="center">
       <img src="data/figures/context_truth.png" width="420" /><br/>
-      <sub>True Extraction</sub>
+      <sub>True Extraction: Sorted by context score within each layer.</sub>
     </td>
     <td align="center">
       <img src="data/figures/context_hallucinated.png" width="420" /><br/>
-      <sub>Hallucinated Extraction</sub>
+      <sub>Hallucinated Extraction: Sorted by context score within each layer.</sub>
     </td>
   </tr>
 </table>
